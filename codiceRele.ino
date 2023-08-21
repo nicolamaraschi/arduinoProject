@@ -1,0 +1,328 @@
+#include <ESP8266WiFi.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
+#include <TaskScheduler.h>
+
+const char* ssid = "FASTWEB-PXPSTE";
+const char* password = "43LY9LDLPH";
+const char* mqttServer = "pissir.colnet.rocks";
+const int mqttPort = 1883;
+const char* actionTopic = "/action";
+bool announced=false;
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+const int relayD2Pin = 4;
+const int relayD3Pin = 0;
+const int relayD4Pin = 2;
+const int relayD5Pin = 14;
+
+bool relay1State = false;
+bool relay2State = false;
+bool relay3State = false;
+bool relay4State = false;
+
+void erogaAcqua(const char* idAttuatore, float quantita);
+void erogaMedio(const char* idAttuatore, float quantita);
+void erogaBasso(const char* idAttuatore, float quantita);
+void callback(char* topic, byte* payload, unsigned int length);
+
+void callbackWrapper() {
+  callback(NULL, NULL, 0);  // Chiamata a callback senza argomenti
+}
+
+void erogaAcquaWrapper() {
+  erogaAcqua(NULL, 0.0);  // Chiamata a erogaAcqua senza argomenti
+}
+
+void erogaMedioWrapper() {
+  erogaMedio(NULL, 0.0);  // Chiamata a erogaMedio senza argomenti
+}
+
+void erogaBassoWrapper() {
+  erogaBasso(NULL, 0.0);  // Chiamata a erogaBasso senza argomenti
+}
+
+
+Task callbackTask(0, TASK_ONCE, &callbackWrapper); // Esegue la funzione callback una sola volta all'inizio
+Task erogaAcquaTask(0, TASK_ONCE, &erogaAcquaWrapper);
+Task erogaMedioTask(0, TASK_ONCE, &erogaMedioWrapper);
+Task erogaBassoTask(0, TASK_ONCE, &erogaBassoWrapper);
+
+
+
+Scheduler scheduler;
+
+void setup() {
+  Serial.begin(9600);
+
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("Connecting to WiFi...");
+  }
+  Serial.println("Connected to WiFi");
+
+  client.setServer(mqttServer, mqttPort);
+  client.setCallback(callback);
+
+  pinMode(relayD2Pin, OUTPUT);
+  pinMode(relayD3Pin, OUTPUT);
+  pinMode(relayD4Pin, OUTPUT);
+  pinMode(relayD5Pin, OUTPUT);
+
+  digitalWrite(relayD2Pin, LOW);
+  digitalWrite(relayD3Pin, LOW);
+  digitalWrite(relayD4Pin, LOW);
+  digitalWrite(relayD5Pin, LOW);
+
+
+  // Assegna i tuoi Task ai relativi periodi di esecuzione
+  scheduler.addTask(erogaAcquaTask);
+  scheduler.addTask(erogaMedioTask);
+  scheduler.addTask(erogaBassoTask);
+  scheduler.addTask(callbackTask); // Aggiungi il task callbackTask
+
+
+ 
+}
+
+void loop() {
+  if (!client.connected()) {
+    reconnect();
+  }
+  client.loop();
+
+  // Esegui i task del scheduler
+  scheduler.execute();
+
+  // Esegui announceAttuatoris() solo una volta
+  if (!announced) {
+    announceAttuatoris();
+    announced = true; // Imposta la variabile a true per evitare esecuzioni successive
+  }
+}
+
+void callback(char* topic, byte* payload, unsigned int length) {
+  Serial.println("Message arrived in topic: " + String(topic));
+
+  // Verifica se il messaggio è sul topic di comando /action
+  if (strcmp(topic, actionTopic) == 0) {
+    // Converti il payload in una stringa JSON
+    payload[length] = '\0';
+    String jsonString = String((char*)payload);
+
+    // Parsing del JSON
+    DynamicJsonDocument jsonDoc(200);
+    DeserializationError error = deserializeJson(jsonDoc, jsonString);
+
+    // Controlla se il parsing ha avuto successo
+    if (error) {
+      Serial.print("Parsing JSON failed: ");
+      Serial.println(error.c_str());
+      return;
+    }
+
+    // Estrai i valori dal JSON
+    const char* tipoIrrigazione = jsonDoc["tipoIrrigazione"].as<const char*>();
+    const char* idAttuatore = jsonDoc["idAttuatore"].as<const char*>();
+    float quantita = jsonDoc["quantita"];
+
+    // Fai qualcosa con i valori estratti
+    Serial.print("Tipo Irrigazione: ");
+    Serial.println(tipoIrrigazione);
+    Serial.print("ID Attuatore: ");
+    Serial.println(idAttuatore);
+    Serial.print("Quantità: ");
+    Serial.println(quantita);
+
+    // Calcola il ritardo (delay) in base alla quantità (1 ml = 4000 ms)
+    int ritardo = quantita * 4000;
+    // Controlla il tipo di irrigazione
+    if (strcmp(tipoIrrigazione, "alta") == 0) {
+      // Tipo di irrigazione "alto": eroga tutta l'acqua subito
+      erogaAcqua(idAttuatore, ritardo);
+    } else if (strcmp(tipoIrrigazione, "media") == 0) {
+      // Tipo di irrigazione "medio": eroga la quantità richiesta con un ritardo tra le erogazioni
+      erogaMedio(idAttuatore, ritardo);
+    } else if (strcmp(tipoIrrigazione, "poca") == 0) {
+      // Tipo di irrigazione "basso": eroga la quantità richiesta con un ritardo ancora maggiore tra le erogazioni
+      erogaBasso(idAttuatore, ritardo);
+    }
+  }
+}
+
+void erogaAcqua(const char* idAttuatore, float quantita) {
+  int ritardo = quantita * 4000; // Calcola il ritardo in base alla quantità (1 ml = 4000 ms)
+
+  if (strcmp(idAttuatore, "pompa1a") == 0) {
+    digitalWrite(relayD2Pin, HIGH);
+    delay(ritardo);
+    digitalWrite(relayD2Pin, LOW);
+  } else if (strcmp(idAttuatore, "pompa2a") == 0) {
+    digitalWrite(relayD3Pin, HIGH);
+    delay(ritardo);
+    digitalWrite(relayD3Pin, LOW);
+  } else if (strcmp(idAttuatore, "pompa1b") == 0) {
+    digitalWrite(relayD4Pin, HIGH);
+    delay(ritardo);
+    digitalWrite(relayD4Pin, LOW);
+  } else if (strcmp(idAttuatore, "pompa2b") == 0) {
+    digitalWrite(relayD5Pin, HIGH);
+    delay(ritardo);
+    digitalWrite(relayD5Pin, LOW);
+  }
+}
+
+void erogaMedio(const char* idAttuatore, float quantita) {
+  int ritardo = quantita * 4000; // Calcola il ritardo in base alla quantità (1 ml = 4000 ms)
+  int intervallo = 2000; // Intervallo tra le erogazioni (esempio)
+
+  while (quantita > 0) {
+    if (quantita >= 5.0) {
+      // Eroga 5 ml alla volta
+      if (strcmp(idAttuatore, "pompa1a") == 0) {
+        digitalWrite(relayD2Pin, HIGH);
+        delay(20000); // Tempo approssimativo per erogare 5 ml
+        digitalWrite(relayD2Pin, LOW);
+      } else if (strcmp(idAttuatore, "pompa2a") == 0) {
+        digitalWrite(relayD3Pin, HIGH);
+        delay(20000); // Tempo approssimativo per erogare 5 ml
+        digitalWrite(relayD3Pin, LOW);
+      } else if (strcmp(idAttuatore, "pompa1b") == 0) {
+        digitalWrite(relayD4Pin, HIGH);
+        delay(20000); // Tempo approssimativo per erogare 5 ml
+        digitalWrite(relayD4Pin, LOW);
+      } else if (strcmp(idAttuatore, "pompa2b") == 0) {
+        digitalWrite(relayD5Pin, HIGH);
+        delay(20000); // Tempo approssimativo per erogare 5 ml
+        digitalWrite(relayD5Pin, LOW);
+      }
+
+      quantita -= 5.0; // Sottrai 5 ml dalla quantità totale
+    } else {
+      // Eroga la quantità rimanente
+      if (strcmp(idAttuatore, "pompa1a") == 0) {
+        digitalWrite(relayD2Pin, HIGH);
+        delay(quantita * 4000); // Tempo per erogare la quantità rimanente
+        digitalWrite(relayD2Pin, LOW);
+      } else if (strcmp(idAttuatore, "pompa2a") == 0) {
+        digitalWrite(relayD3Pin, HIGH);
+        delay(quantita * 4000); // Tempo per erogare la quantità rimanente
+        digitalWrite(relayD3Pin, LOW);
+      } else if (strcmp(idAttuatore, "pompa1b") == 0) {
+        digitalWrite(relayD4Pin, HIGH);
+        delay(quantita * 4000); // Tempo per erogare la quantità rimanente
+        digitalWrite(relayD4Pin, LOW);
+      } else if (strcmp(idAttuatore, "pompa2b") == 0) {
+        digitalWrite(relayD5Pin, HIGH);
+        delay(quantita * 4000); // Tempo per erogare la quantità rimanente
+        digitalWrite(relayD5Pin, LOW);
+      }
+      quantita = 0; // La quantità è stata completamente erogata
+    }
+
+    // Aggiungi un intervallo tra le erogazioni successive
+    delay(intervallo);
+  }
+}
+
+void erogaBasso(const char* idAttuatore, float quantita) {
+  int ritardo = quantita * 4000; // Calcola il ritardo in base alla quantità (1 ml = 4000 ms)
+  int intervallo = 4000; // Intervallo più lungo tra le erogazioni (esempio)
+
+  while (quantita > 0) {
+    if (quantita >= 5.0) {
+      // Eroga 5 ml alla volta
+      if (strcmp(idAttuatore, "pompa1a") == 0) {
+        digitalWrite(relayD2Pin, HIGH);
+        delay(20000); // Tempo approssimativo per erogare 5 ml
+        digitalWrite(relayD2Pin, LOW);
+      } else if (strcmp(idAttuatore, "pompa2a") == 0) {
+        digitalWrite(relayD3Pin, HIGH);
+        delay(20000); // Tempo approssimativo per erogare 5 ml
+        digitalWrite(relayD3Pin, LOW);
+      } else if (strcmp(idAttuatore, "pompa1b") == 0) {
+        digitalWrite(relayD4Pin, HIGH);
+        delay(20000); // Tempo approssimativo per erogare 5 ml
+        digitalWrite(relayD4Pin, LOW);
+      } else if (strcmp(idAttuatore, "pompa2b") == 0) {
+        digitalWrite(relayD5Pin, HIGH);
+        delay(20000); // Tempo approssimativo per erogare 5 ml
+        digitalWrite(relayD5Pin, LOW);
+      }
+
+      quantita -= 5.0; // Sottrai 5 ml dalla quantità totale
+    } else {
+      // Eroga la quantità rimanente
+      if (strcmp(idAttuatore, "pompa1a") == 0) {
+        digitalWrite(relayD2Pin, HIGH);
+        delay(quantita * 4000); // Tempo per erogare la quantità rimanente
+        digitalWrite(relayD2Pin, LOW);
+      } else if (strcmp(idAttuatore, "pompa2a") == 0) {
+        digitalWrite(relayD3Pin, HIGH);
+        delay(quantita * 4000); // Tempo per erogare la quantità rimanente
+        digitalWrite(relayD3Pin, LOW);
+      } else if (strcmp(idAttuatore, "pompa1b") == 0) {
+        digitalWrite(relayD4Pin, HIGH);
+        delay(quantita * 4000); // Tempo per erogare la quantità rimanente
+        digitalWrite(relayD4Pin, LOW);
+      } else if (strcmp(idAttuatore, "pompa2b") == 0) {
+        digitalWrite(relayD5Pin, HIGH);
+        delay(quantita * 4000); // Tempo per erogare la quantità rimanente
+        digitalWrite(relayD5Pin, LOW);
+      }
+      quantita = 0; // La quantità è stata completamente erogata
+    }
+
+    // Aggiungi un intervallo più lungo tra le erogazioni successive
+    delay(intervallo);
+  }
+}
+
+void reconnect() {
+  while (!client.connected()) {
+    Serial.print("Connecting to MQTT server...");
+    if (client.connect("ESP8266Client")) {
+      Serial.println("Connected to MQTT server");
+    } else {
+      Serial.print("Retrying in 5 seconds...");
+      delay(5000);
+    }
+  }
+}
+/*
+void announceAttuatori() {
+  const char* attuatori[] = {"pompa1a", "pompa2a", "pompa1b", "pompa2b"};
+  for (int i = 0; i < sizeof(attuatori) / sizeof(attuatori[0]); i++) {
+    StaticJsonDocument<200> jsonDoc;
+    jsonDoc["tipoAttuatore"] = "pompa";
+    jsonDoc["nome"] = attuatori[i];
+    jsonDoc["idCampo"] = (i < 2) ? 1 : 2;
+    String jsonStr;
+    serializeJson(jsonDoc, jsonStr);
+    client.publish("/announce", jsonStr.c_str());
+  }
+}
+*/
+
+void announceAttuatori(const char* tipoAttuatore, const char* nomeAttuatore, int idCampo) {
+  // Annuncio del sensore nel topic /announce
+  StaticJsonDocument<200> jsonDoc;
+  jsonDoc["tipoAttuatore"] = tipoAttuatore;
+  jsonDoc["nome"] = nomeAttuatore;
+  jsonDoc["idCampo"] = idCampo;
+  String jsonStr;
+  serializeJson(jsonDoc, jsonStr);
+  client.publish("/announce", jsonStr.c_str());
+}
+
+void announceAttuatoris() {
+  // Annuncio dei sensori al topic /announce
+  announceAttuatori("pompa", "pompa1a", 1);
+  announceAttuatori("pompa", "pompa2a", 2);
+  announceAttuatori("pompa", "pompa1b", 1);
+  announceAttuatori("pompa", "pompa2b", 2);
+}
+
