@@ -10,10 +10,9 @@ const int utcOffsetInSeconds = 3600; // Offset orario (in secondi) dalla UTC (ad
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds);
 
-//per il tending poi da CANCELLARE
+//per il testing poi da CANCELLARE
 const char* actionMessage = "{\"tipoIrrigazione\":\"alta\",\"idAttuatore\":\"pompa1a\",\"quantita\":5.0}";
 const char* schedulingMessage = "{\"tipoIrrigazione\":\"media\",\"idAttuatore\":\"pompa2a\",\"quantita\":7.0,\"orarioIrrigazione\":\"10:30\"}";
-
 
 // Impostazioni server NTP
 const char* ntpServerName = "pool.ntp.org";
@@ -49,6 +48,11 @@ void callbackWrapper();
 void erogaAcquaWrapper();
 void erogaMedioWrapper();
 void erogaBassoWrapper();
+bool programmaEsiste(const char* idAttuatore);
+void creaProgramma(const char* tipoIrrigazione, const char* idAttuatore, float quantita, int ora, int minuto);
+void sovrascriviProgramma(const char* tipoIrrigazione, const char* idAttuatore, float quantita, int ora, int minuto);
+void rimuoviProgramma(const char* idAttuatore);
+
 
 Task callbackTask(0, TASK_ONCE, &callbackWrapper);
 Task erogaAcquaTask(0, TASK_ONCE, &erogaAcquaWrapper);
@@ -72,7 +76,6 @@ void erogaMedioWrapper() {
 void erogaBassoWrapper() {
   erogaBasso(NULL, 0.0);  // Chiamata a erogaBasso senza argomenti
 }
-
 
 // EEPROM
 struct ProgrammaIrrigazione {
@@ -161,11 +164,8 @@ void loop() {
   }
 }
 
-
-
 void callback(char* topic, byte* payload, unsigned int length) {
   Serial.println("Message arrived in topic: " + String(topic));
-
   // Verifica se il messaggio è sul topic di comando /action
   if (strcmp(topic, actionTopic) == 0) {
     // Converti il payload in una stringa JSON
@@ -209,7 +209,8 @@ void callback(char* topic, byte* payload, unsigned int length) {
       // Tipo di irrigazione "basso": eroga la quantità richiesta con un ritardo ancora maggiore tra le erogazioni
       erogaBasso(idAttuatore, ritardo);
     }
-  } else if (strcmp(topic, "/scheduling") == 0) {
+  } 
+  else if (strcmp(topic, "/scheduling") == 0) {
     // Gestisci i messaggi sul topic /scheduling
     // Esegui il parsing del JSON per estrarre i dati aggiuntivi, come l'orario di irrigazione
     payload[length] = '\0';
@@ -243,6 +244,19 @@ void callback(char* topic, byte* payload, unsigned int length) {
       return;
     }
 
+    // Verifica se esiste già un programma per l'attuatore specificato
+    if (programmaEsiste(idAttuatore)) {
+      // Sovrascrivi il programma esistente con quello nuovo
+      sovrascriviProgramma(tipoIrrigazione, idAttuatore, quantita, ora, minuto);
+    } else {
+      // Se non esiste un programma per l'attuatore, crea un nuovo programma
+      creaProgramma(tipoIrrigazione, idAttuatore, quantita, ora, minuto);
+    }
+
+    // Controlla se orarioIrrigazione è uguale a null e rimuovi il programma se lo è
+    if (strcmp(orarioIrrigazioneString, "null") == 0) {
+      rimuoviProgramma(idAttuatore);
+    }
     // Fai qualcosa con i valori estratti
     Serial.print("Tipo Irrigazione: ");
     Serial.println(tipoIrrigazione);
@@ -258,7 +272,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
     Serial.println(ora);
     Serial.print("Minuto: ");
     Serial.println(minuto);
-    // Esegui le operazioni necessarie basate sull'orario di irrigazione
+  
   }
 }
 
@@ -440,6 +454,8 @@ void announceAttuatoris() {
   announceAttuatori("pompa", "pompa2b", "1fu6nm9eyadq3");
 }
 
+
+
 void runTests() {
   // Test di connettività WiFi
   if (WiFi.status() == WL_CONNECTED) {
@@ -482,7 +498,7 @@ void runTests() {
   // Aggiungi verifiche qui per assicurarti che l'irrigazione sia stata eseguita correttamente
  // Test di ricezione messaggio JSON su /action
 
-  callback("/action", (byte*)actionMessage, strlen(actionMessage));
+  //callback("/action", (byte*)actionMessage, strlen(actionMessage));
 
 
   // Assicurati di includere il codice per gestire il messaggio JSON su /action nella tua funzione callback.
@@ -490,7 +506,7 @@ void runTests() {
 
    // Test di ricezione messaggio JSON su /scheduling
   const char schedulingMessage[] = "{\"tipoIrrigazione\":\"media\",\"idAttuatore\":\"pompa2a\",\"quantita\":7.0,\"orarioIrrigazione\":\"10:30\"}";
-  callback("/scheduling", (byte*)schedulingMessage, strlen(schedulingMessage));
+  //callback("/scheduling", (byte*)schedulingMessage, strlen(schedulingMessage));
 
   // Assicurati di includere il codice per gestire il messaggio JSON su /scheduling nella tua funzione callback.
   // Qui puoi aggiungere una verifica per assicurarti che il messaggio sia stato elaborato correttamente.
@@ -500,4 +516,92 @@ void runTests() {
 }
 
 
+
+bool programmaEsiste(const char* idAttuatore) {
+  for (int i = 0; i < NUMERO_PROGRAMMI_IRRIGAZIONE; i++) {
+    ProgrammaIrrigazione programma;
+    EEPROM.get(EEPROM_ADDRESS + i * EEPROM_SIZE, programma);
+
+    if (strcmp(programma.idAttuatore, idAttuatore) == 0) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// Aggiungi questa funzione per creare un nuovo programma
+void creaProgramma(const char* tipoIrrigazione, const char* idAttuatore, float quantita, int ora, int minuto) {
+  int slotVuoto = -1;
+  for (int i = 0; i < NUMERO_PROGRAMMI_IRRIGAZIONE; i++) {
+    ProgrammaIrrigazione programma;
+    EEPROM.get(EEPROM_ADDRESS + i * EEPROM_SIZE, programma);
+
+    if (strlen(programma.idAttuatore) == 0) {
+      // Questo slot è vuoto, possiamo usarlo
+      slotVuoto = i;
+      break;
+    }
+  }
+
+  if (slotVuoto != -1) {
+    // Trovato uno slot vuoto, crea un nuovo programma
+    ProgrammaIrrigazione nuovoProgramma;
+    strcpy(nuovoProgramma.tipoIrrigazione, tipoIrrigazione);
+    strcpy(nuovoProgramma.idAttuatore, idAttuatore);
+    nuovoProgramma.quantita = quantita;
+    nuovoProgramma.ora = ora;
+    nuovoProgramma.minuto = minuto;
+
+    // Scrivi il nuovo programma nella EEPROM
+    EEPROM.put(EEPROM_ADDRESS + slotVuoto * EEPROM_SIZE, nuovoProgramma);
+    EEPROM.commit();
+    Serial.println("Nuovo programma creato e memorizzato nella EEPROM.");
+  } else {
+    Serial.println("Nessuno slot vuoto trovato nella EEPROM. Impossibile memorizzare il nuovo programma.");
+  }
+}
+
+// Aggiungi questa funzione per sovrascrivere un programma esistente
+void sovrascriviProgramma(const char* tipoIrrigazione, const char* idAttuatore, float quantita, int ora, int minuto) {
+  for (int i = 0; i < NUMERO_PROGRAMMI_IRRIGAZIONE; i++) {
+    ProgrammaIrrigazione programma;
+    EEPROM.get(EEPROM_ADDRESS + i * EEPROM_SIZE, programma);
+
+    if (strcmp(programma.idAttuatore, idAttuatore) == 0) {
+      // Sovrascrivi il programma con i nuovi dati
+      strcpy(programma.tipoIrrigazione, tipoIrrigazione);
+      programma.quantita = quantita;
+      programma.ora = ora;
+      programma.minuto = minuto;
+
+      // Scrivi il programma sovrascritto nella EEPROM
+      EEPROM.put(EEPROM_ADDRESS + i * EEPROM_SIZE, programma);
+      EEPROM.commit();
+      Serial.println("Programma per attuatore sovrascritto con successo.");
+      return;
+    }
+  }
+
+  Serial.println("Programma per attuatore non trovato. Impossibile sovrascrivere.");
+}
+
+// Aggiungi questa funzione per rimuovere un programma esistente
+void rimuoviProgramma(const char* idAttuatore) {
+  for (int i = 0; i < NUMERO_PROGRAMMI_IRRIGAZIONE; i++) {
+    ProgrammaIrrigazione programma;
+    EEPROM.get(EEPROM_ADDRESS + i * EEPROM_SIZE, programma);
+
+    if (strcmp(programma.idAttuatore, idAttuatore) == 0) {
+      // Rimuovi il programma cancellando i dati dalla memoria EEPROM
+      memset(&programma, 0, sizeof(ProgrammaIrrigazione));
+      EEPROM.put(EEPROM_ADDRESS + i * EEPROM_SIZE, programma);
+      EEPROM.commit();
+      Serial.println("Programma per attuatore rimosso con successo.");
+      return;
+    }
+  }
+
+  Serial.println("Programma per attuatore non trovato. Impossibile rimuovere.");
+}
 
