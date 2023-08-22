@@ -10,6 +10,11 @@ const int utcOffsetInSeconds = 3600; // Offset orario (in secondi) dalla UTC (ad
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds);
 
+//per il tending poi da CANCELLARE
+const char* actionMessage = "{\"tipoIrrigazione\":\"alta\",\"idAttuatore\":\"pompa1a\",\"quantita\":5.0}";
+const char* schedulingMessage = "{\"tipoIrrigazione\":\"media\",\"idAttuatore\":\"pompa2a\",\"quantita\":7.0,\"orarioIrrigazione\":\"10:30\"}";
+
+
 // Impostazioni server NTP
 const char* ntpServerName = "pool.ntp.org";
 
@@ -434,5 +439,65 @@ void announceAttuatoris() {
   announceAttuatori("pompa", "pompa1b", "w2oih8lb3atrc");
   announceAttuatori("pompa", "pompa2b", "1fu6nm9eyadq3");
 }
+
+void runTests() {
+  // Test di connettività WiFi
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("Test WiFi: OK");
+  } else {
+    Serial.println("Test WiFi: FALLITO");
+  }
+
+  // Test di connessione MQTT
+  if (client.connected()) {
+    Serial.println("Test MQTT: OK");
+  } else {
+    Serial.println("Test MQTT: FALLITO");
+  }
+
+  // Test di funzionamento delle pompe (puoi aggiungere altri test per altri dispositivi)
+  digitalWrite(relayD2Pin, HIGH);
+  delay(1000); // Attendere un secondo
+  digitalWrite(relayD2Pin, LOW);
+
+  // Verificare lo stato delle pompe dopo il test
+  if (digitalRead(relayD2Pin) == LOW) {
+    Serial.println("Test Pompa 1a: OK");
+  } else {
+    Serial.println("Test Pompa 1a: FALLITO");
+  }
+
+  // Puoi eseguire altri test qui, ad esempio test delle altre pompe e funzionalità specifiche
+
+  // Test di irrigazione (simulato)
+  ProgrammaIrrigazione testProgramma;
+  strcpy(testProgramma.tipoIrrigazione, "alta");
+  strcpy(testProgramma.idAttuatore, "pompa1a");
+  testProgramma.quantita = 10.0; // Imposta la quantità
+  testProgramma.ora = 12; // Imposta un orario valido
+  testProgramma.minuto = 0;
+
+  eseguiCodiceIrrigazione(testProgramma);
+
+  // Aggiungi verifiche qui per assicurarti che l'irrigazione sia stata eseguita correttamente
+ // Test di ricezione messaggio JSON su /action
+
+  callback("/action", (byte*)actionMessage, strlen(actionMessage));
+
+
+  // Assicurati di includere il codice per gestire il messaggio JSON su /action nella tua funzione callback.
+  // Qui puoi aggiungere una verifica per assicurarti che il messaggio sia stato elaborato correttamente.
+
+   // Test di ricezione messaggio JSON su /scheduling
+  const char schedulingMessage[] = "{\"tipoIrrigazione\":\"media\",\"idAttuatore\":\"pompa2a\",\"quantita\":7.0,\"orarioIrrigazione\":\"10:30\"}";
+  callback("/scheduling", (byte*)schedulingMessage, strlen(schedulingMessage));
+
+  // Assicurati di includere il codice per gestire il messaggio JSON su /scheduling nella tua funzione callback.
+  // Qui puoi aggiungere una verifica per assicurarti che il messaggio sia stato elaborato correttamente.
+
+  // Test completati
+  Serial.println("Test completati");
+}
+
 
 
