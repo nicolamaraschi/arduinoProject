@@ -174,8 +174,10 @@ void callback(char* topic, byte* payload, unsigned int length) {
     // Estrai l'orario di irrigazione come stringa nel formato "ora:minuto"
     const char* orarioIrrigazioneString = jsonDoc["orarioIrrigazione"].as<const char*>();
 
-    // Esegui il parsing dell'orario in ore e minuti
+    // Dichiarazione delle variabili per l'orario
     int ora, minuto;
+
+    // Esegui il parsing dell'orario in ore e minuti
     if (sscanf(orarioIrrigazioneString, "%d:%d", &ora, &minuto) != 2) {
       // Errore nel parsing dell'orario
       Serial.println("Errore nel parsing dell'orario di irrigazione.");
@@ -191,7 +193,12 @@ void callback(char* topic, byte* payload, unsigned int length) {
     Serial.println(quantita);
     Serial.print("Orario di Irrigazione (ora:minuto): ");
     Serial.println(orarioIrrigazioneString);
-    
+
+    // Ora e minuto sono ora disponibili come variabili separate
+    Serial.print("Ora: ");
+    Serial.println(ora);
+    Serial.print("Minuto: ");
+    Serial.println(minuto);
     // Esegui le operazioni necessarie basate sull'orario di irrigazione
   }
 }
