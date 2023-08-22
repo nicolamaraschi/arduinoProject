@@ -3,13 +3,22 @@
 #include <ArduinoJson.h>
 #include <TaskScheduler.h>
 #include <NTPClient.h>
+#include <EEPROM.h>
+#include <WiFiUdp.h>
+
+const int utcOffsetInSeconds = 3600; // Offset orario (in secondi) dalla UTC (ad esempio, 1 ora)
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds);
+
+// Impostazioni server NTP
+const char* ntpServerName = "pool.ntp.org";
 
 const char* ssid = "FASTWEB-PXPSTE";
 const char* password = "43LY9LDLPH";
 const char* mqttServer = "pissir.colnet.rocks";
 const int mqttPort = 1883;
 const char* actionTopic = "/action";
-bool announced=false;
+bool announced = false;
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -24,11 +33,24 @@ bool relay2State = false;
 bool relay3State = false;
 bool relay4State = false;
 
+// Inserisci questa dichiarazione prima della funzione setup()
+struct ProgrammaIrrigazione;
+
 void erogaAcqua(const char* idAttuatore, float quantita);
 void erogaMedio(const char* idAttuatore, float quantita);
 void erogaBasso(const char* idAttuatore, float quantita);
 void callback(char* topic, byte* payload, unsigned int length);
+void callbackWrapper();
+void erogaAcquaWrapper();
+void erogaMedioWrapper();
+void erogaBassoWrapper();
 
+Task callbackTask(0, TASK_ONCE, &callbackWrapper);
+Task erogaAcquaTask(0, TASK_ONCE, &erogaAcquaWrapper);
+Task erogaMedioTask(0, TASK_ONCE, &erogaMedioWrapper);
+Task erogaBassoTask(0, TASK_ONCE, &erogaBassoWrapper);
+
+Scheduler scheduler;
 
 void callbackWrapper() {
   callback(NULL, NULL, 0);  // Chiamata a callback senza argomenti
@@ -47,20 +69,18 @@ void erogaBassoWrapper() {
 }
 
 
-Task callbackTask(0, TASK_ONCE, &callbackWrapper); // Esegue la funzione callback una sola volta all'inizio
-Task erogaAcquaTask(0, TASK_ONCE, &erogaAcquaWrapper);
-Task erogaMedioTask(0, TASK_ONCE, &erogaMedioWrapper);
-Task erogaBassoTask(0, TASK_ONCE, &erogaBassoWrapper);
+// EEPROM
+struct ProgrammaIrrigazione {
+  char tipoIrrigazione[20];
+  char idAttuatore[20];
+  float quantita;
+  int ora;
+  int minuto;
+};
 
-// Impostazioni server NTP
-const char* ntpServerName = "pool.ntp.org";
-const int utcOffsetInSeconds = 3600; // Offset orario (in secondi) dalla UTC (ad esempio, 1 ora)
-// Oggetto per la connessione UDP
-WiFiUDP ntpUDP;
-// Oggetto NTPClient per ottenere l'orario
-NTPClient timeClient(ntpUDP, ntpServerName, utcOffsetInSeconds);
-
-Scheduler scheduler;
+const int EEPROM_SIZE = sizeof(ProgrammaIrrigazione);
+const int NUMERO_PROGRAMMI_IRRIGAZIONE = 10; // Numero massimo di programmi di irrigazione
+const int EEPROM_ADDRESS = 0; // Indirizzo di inizio EEPROM per i dati di irrigazione
 
 void setup() {
   Serial.begin(9600);
@@ -85,18 +105,23 @@ void setup() {
   digitalWrite(relayD4Pin, LOW);
   digitalWrite(relayD5Pin, LOW);
 
-
   // Assegna i tuoi Task ai relativi periodi di esecuzione
   scheduler.addTask(erogaAcquaTask);
   scheduler.addTask(erogaMedioTask);
   scheduler.addTask(erogaBassoTask);
   scheduler.addTask(callbackTask); // Aggiungi il task callbackTask
 
-
-   // Inizializza il client NTP
+  // Inizializza la libreria NTPClient
   timeClient.begin();
-  timeClient.update(); // Ottieni l'orario corrente
- 
+  timeClient.setTimeOffset(utcOffsetInSeconds);
+
+  // Recupera l'ora corrente dal server NTP
+  while (!timeClient.update()) {
+    timeClient.forceUpdate();
+  }
+
+  // Inizia il loop di scheduling
+  scheduler.startNow();
 }
 
 void loop() {
@@ -114,16 +139,23 @@ void loop() {
     announced = true; // Imposta la variabile a true per evitare esecuzioni successive
   }
 
-  // Aggiorna l'orario dal server NTP ogni 10 minuti (600.000 millisecondi)
-  if (millis() - timeClient.getLastUpdate() > 600000) {
-    timeClient.update();
-  }
-
-  // Ottieni l'orario e i minuti
+  // Recupera l'ora corrente dal server NTP
+  timeClient.update();
   int currentHour = timeClient.getHours();
   int currentMinute = timeClient.getMinutes();
 
+  // Confronta l'orario corrente con i programmi di irrigazione salvati in EEPROM
+  for (int i = 0; i < NUMERO_PROGRAMMI_IRRIGAZIONE; i++) {
+    ProgrammaIrrigazione programma;
+    EEPROM.get(EEPROM_ADDRESS + i * EEPROM_SIZE, programma);
+
+    if (currentHour == programma.ora && currentMinute == programma.minuto) {
+      // Esegui il codice di irrigazione per questo programma
+      eseguiCodiceIrrigazione(programma);
+    }
+  }
 }
+
 
 
 void callback(char* topic, byte* payload, unsigned int length) {
@@ -365,21 +397,25 @@ void reconnect() {
     }
   }
 }
-/*
-void announceAttuatori() {
-  const char* attuatori[] = {"pompa1a", "pompa2a", "pompa1b", "pompa2b"};
-  for (int i = 0; i < sizeof(attuatori) / sizeof(attuatori[0]); i++) {
-    StaticJsonDocument<200> jsonDoc;
-    jsonDoc["tipoAttuatore"] = "pompa";
-    jsonDoc["nome"] = attuatori[i];
-    jsonDoc["idCampo"] = (i < 2) ? 1 : 2;
-    String jsonStr;
-    serializeJson(jsonDoc, jsonStr);
-    client.publish("/announce", jsonStr.c_str());
+// Funzione per eseguire il codice di irrigazione in base al programma programmato
+void eseguiCodiceIrrigazione(ProgrammaIrrigazione programma) {
+  Serial.println("Esecuzione del programma di irrigazione:");
+
+  // Puoi utilizzare i dati del programma (programma.tipoIrrigazione, programma.idAttuatore, programma.quantita) per eseguire l'irrigazione qui.
+  // ...
+
+  // Ora devi eseguire il codice di erogazione basato sui dati del programma
+  if (strcmp(programma.tipoIrrigazione, "alta") == 0) {
+    // Tipo di irrigazione "alto": eroga tutta l'acqua subito
+    erogaAcqua(programma.idAttuatore, programma.quantita);
+  } else if (strcmp(programma.tipoIrrigazione, "media") == 0) {
+    // Tipo di irrigazione "medio": eroga la quantità richiesta con un ritardo tra le erogazioni
+    erogaMedio(programma.idAttuatore, programma.quantita);
+  } else if (strcmp(programma.tipoIrrigazione, "basso") == 0) {
+    // Tipo di irrigazione "basso": eroga la quantità richiesta con un ritardo ancora maggiore tra le erogazioni
+    erogaBasso(programma.idAttuatore, programma.quantita);
   }
 }
-*/
-
 void announceAttuatori(const char* tipoAttuatore, const char* nomeAttuatore, const char* idCampo) {
   // Annuncio del sensore nel topic /announce
   StaticJsonDocument<200> jsonDoc;
@@ -398,4 +434,5 @@ void announceAttuatoris() {
   announceAttuatori("pompa", "pompa1b", "w2oih8lb3atrc");
   announceAttuatori("pompa", "pompa2b", "1fu6nm9eyadq3");
 }
+
 
