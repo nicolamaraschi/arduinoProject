@@ -2,6 +2,7 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <TaskScheduler.h>
+#include <NTPClient.h>
 
 const char* ssid = "FASTWEB-PXPSTE";
 const char* password = "43LY9LDLPH";
@@ -51,7 +52,13 @@ Task erogaAcquaTask(0, TASK_ONCE, &erogaAcquaWrapper);
 Task erogaMedioTask(0, TASK_ONCE, &erogaMedioWrapper);
 Task erogaBassoTask(0, TASK_ONCE, &erogaBassoWrapper);
 
-
+// Impostazioni server NTP
+const char* ntpServerName = "pool.ntp.org";
+const int utcOffsetInSeconds = 3600; // Offset orario (in secondi) dalla UTC (ad esempio, 1 ora)
+// Oggetto per la connessione UDP
+WiFiUDP ntpUDP;
+// Oggetto NTPClient per ottenere l'orario
+NTPClient timeClient(ntpUDP, ntpServerName, utcOffsetInSeconds);
 
 Scheduler scheduler;
 
@@ -84,6 +91,11 @@ void setup() {
   scheduler.addTask(erogaMedioTask);
   scheduler.addTask(erogaBassoTask);
   scheduler.addTask(callbackTask); // Aggiungi il task callbackTask
+
+
+   // Inizializza il client NTP
+  timeClient.begin();
+  timeClient.update(); // Ottieni l'orario corrente
  
 }
 
@@ -101,7 +113,18 @@ void loop() {
     announceAttuatoris();
     announced = true; // Imposta la variabile a true per evitare esecuzioni successive
   }
+
+  // Aggiorna l'orario dal server NTP ogni 10 minuti (600.000 millisecondi)
+  if (millis() - timeClient.getLastUpdate() > 600000) {
+    timeClient.update();
+  }
+
+  // Ottieni l'orario e i minuti
+  int currentHour = timeClient.getHours();
+  int currentMinute = timeClient.getMinutes();
+
 }
+
 
 void callback(char* topic, byte* payload, unsigned int length) {
   Serial.println("Message arrived in topic: " + String(topic));
@@ -170,7 +193,6 @@ void callback(char* topic, byte* payload, unsigned int length) {
     const char* tipoIrrigazione = jsonDoc["tipoIrrigazione"].as<const char*>();
     const char* idAttuatore = jsonDoc["idAttuatore"].as<const char*>();
     float quantita = jsonDoc["quantita"];
-
     // Estrai l'orario di irrigazione come stringa nel formato "ora:minuto"
     const char* orarioIrrigazioneString = jsonDoc["orarioIrrigazione"].as<const char*>();
 
