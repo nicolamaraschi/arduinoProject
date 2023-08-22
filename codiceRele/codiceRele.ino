@@ -28,6 +28,7 @@ void erogaMedio(const char* idAttuatore, float quantita);
 void erogaBasso(const char* idAttuatore, float quantita);
 void callback(char* topic, byte* payload, unsigned int length);
 
+
 void callbackWrapper() {
   callback(NULL, NULL, 0);  // Chiamata a callback senza argomenti
 }
@@ -83,8 +84,6 @@ void setup() {
   scheduler.addTask(erogaMedioTask);
   scheduler.addTask(erogaBassoTask);
   scheduler.addTask(callbackTask); // Aggiungi il task callbackTask
-
-
  
 }
 
@@ -150,8 +149,53 @@ void callback(char* topic, byte* payload, unsigned int length) {
       // Tipo di irrigazione "basso": eroga la quantità richiesta con un ritardo ancora maggiore tra le erogazioni
       erogaBasso(idAttuatore, ritardo);
     }
+  } else if (strcmp(topic, "/scheduling") == 0) {
+    // Gestisci i messaggi sul topic /scheduling
+    // Esegui il parsing del JSON per estrarre i dati aggiuntivi, come l'orario di irrigazione
+    payload[length] = '\0';
+    String jsonString = String((char*)payload);
+
+    // Parsing del JSON
+    DynamicJsonDocument jsonDoc(200);
+    DeserializationError error = deserializeJson(jsonDoc, jsonString);
+
+    // Controlla se il parsing ha avuto successo
+    if (error) {
+      Serial.print("Parsing JSON failed: ");
+      Serial.println(error.c_str());
+      return;
+    }
+
+  // Estrai i valori dal JSON
+    const char* tipoIrrigazione = jsonDoc["tipoIrrigazione"].as<const char*>();
+    const char* idAttuatore = jsonDoc["idAttuatore"].as<const char*>();
+    float quantita = jsonDoc["quantita"];
+
+    // Estrai l'orario di irrigazione come stringa nel formato "ora:minuto"
+    const char* orarioIrrigazioneString = jsonDoc["orarioIrrigazione"].as<const char*>();
+
+    // Esegui il parsing dell'orario in ore e minuti
+    int ora, minuto;
+    if (sscanf(orarioIrrigazioneString, "%d:%d", &ora, &minuto) != 2) {
+      // Errore nel parsing dell'orario
+      Serial.println("Errore nel parsing dell'orario di irrigazione.");
+      return;
+    }
+
+    // Fai qualcosa con i valori estratti
+    Serial.print("Tipo Irrigazione: ");
+    Serial.println(tipoIrrigazione);
+    Serial.print("ID Attuatore: ");
+    Serial.println(idAttuatore);
+    Serial.print("Quantità: ");
+    Serial.println(quantita);
+    Serial.print("Orario di Irrigazione (ora:minuto): ");
+    Serial.println(orarioIrrigazioneString);
+    
+    // Esegui le operazioni necessarie basate sull'orario di irrigazione
   }
 }
+
 
 void erogaAcqua(const char* idAttuatore, float quantita) {
   int ritardo = quantita * 4000; // Calcola il ritardo in base alla quantità (1 ml = 4000 ms)
@@ -307,7 +351,7 @@ void announceAttuatori() {
 }
 */
 
-void announceAttuatori(const char* tipoAttuatore, const char* nomeAttuatore, int idCampo) {
+void announceAttuatori(const char* tipoAttuatore, const char* nomeAttuatore, const char* idCampo) {
   // Annuncio del sensore nel topic /announce
   StaticJsonDocument<200> jsonDoc;
   jsonDoc["tipoAttuatore"] = tipoAttuatore;
@@ -320,9 +364,9 @@ void announceAttuatori(const char* tipoAttuatore, const char* nomeAttuatore, int
 
 void announceAttuatoris() {
   // Annuncio dei sensori al topic /announce
-  announceAttuatori("pompa", "pompa1a", 1);
-  announceAttuatori("pompa", "pompa2a", 2);
-  announceAttuatori("pompa", "pompa1b", 1);
-  announceAttuatori("pompa", "pompa2b", 2);
+  announceAttuatori("pompa", "pompa1a", "6t39cpuv1lke");
+  announceAttuatori("pompa", "pompa2a", "a7kb5rqp9jes6");
+  announceAttuatori("pompa", "pompa1b", "w2oih8lb3atrc");
+  announceAttuatori("pompa", "pompa2b", "1fu6nm9eyadq3");
 }
 
