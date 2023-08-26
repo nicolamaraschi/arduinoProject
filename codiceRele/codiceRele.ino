@@ -1,7 +1,6 @@
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
-#include <TaskScheduler.h>
 #include <NTPClient.h>
 #include <EEPROM.h>
 #include <WiFiUdp.h>
@@ -83,8 +82,11 @@ void setup() {
   Serial.println("Connected to WiFi");
 
   client.setServer(mqttServer, mqttPort);
-  client.setCallback(callback);
+  client.setCallback(callback_test);
+  //client.setCallback(myMqttCallback);
 
+
+  //gestione rele 
   pinMode(relayD2Pin, OUTPUT);
   pinMode(relayD3Pin, OUTPUT);
   pinMode(relayD4Pin, OUTPUT);
@@ -95,15 +97,26 @@ void setup() {
   digitalWrite(relayD4Pin, LOW);
   digitalWrite(relayD5Pin, LOW);
 
+
   // Inizializza la libreria NTPClient
   timeClient.begin();
   timeClient.setTimeOffset(utcOffsetInSeconds);
+
 
   // Recupera l'ora corrente dal server NTP
   while (!timeClient.update()) {
     timeClient.forceUpdate();
   }
 
+  // Connessione al server MQTT
+  if (client.connect("ESP8266Client")) {
+    Serial.println("Connesso al server MQTT");
+    // Sottoscrivi il client ai topic desiderati
+    client.subscribe("/action"); 
+    client.subscribe("/scheduling"); 
+  } else {
+  Serial.println("Connessione al server MQTT fallita");
+  }
 }
 
 void loop() {
@@ -111,6 +124,7 @@ void loop() {
   if (!client.connected()) {
     reconnect();
   }
+
   client.loop();
 
   // Esegui announceAttuatoris() solo una volta
@@ -124,8 +138,8 @@ void loop() {
   int currentHour = timeClient.getHours();
   int currentMinute = timeClient.getMinutes();
 
-     // Scorrere la coda delle irrigazioni e eseguire i comandi se presenti
-    executeIrrigations();
+  // Scorrere la coda delle irrigazioni e eseguire i comandi se presenti
+  executeIrrigations();
 
    // Confronta l'orario corrente con i programmi di irrigazione salvati in EEPROM
   for (int i = 0; i < NUMERO_PROGRAMMI_IRRIGAZIONE; i++) {
@@ -144,7 +158,55 @@ void loop() {
       addToIrrigationQueue(programma.idAttuatore, programma.tipoIrrigazione, ritardo);
     }
   }
-  
+ 
+}
+
+void callback_test(char* topic, byte* payload, unsigned int length) {
+  Serial.println("Message arrived in topic: " + String(topic));
+
+  Serial.print("Payload: ");
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
+}
+
+void myMqttCallback(char* topic, byte* payload, unsigned int length) {
+  Serial.println("Messaggio ricevuto sul topic: " + String(topic));
+
+  // Verifica se il messaggio è sul topic di interesse (actionTopic)
+  if (strcmp(topic, actionTopic) == 0) {
+    // Converti il payload in una stringa JSON
+    payload[length] = '\0';
+    String jsonString = String((char*)payload);
+
+    // Parsing del JSON
+    DynamicJsonDocument jsonDoc(200);
+    DeserializationError error = deserializeJson(jsonDoc, jsonString);
+
+    // Controlla se il parsing ha avuto successo
+    if (error) {
+      Serial.print("Parsing JSON failed: ");
+      Serial.println(error.c_str());
+      return;
+    }
+
+    // Estrai i valori dal JSON
+    const char* tipoIrrigazione = jsonDoc["tipoIrrigazione"].as<const char*>();
+    const char* idAttuatore = jsonDoc["idAttuatore"].as<const char*>();
+    float quantita = jsonDoc["quantita"];
+
+    // Fai qualcosa con i valori estratti
+    Serial.print("Tipo Irrigazione: ");
+    Serial.println(tipoIrrigazione);
+    Serial.print("ID Attuatore: ");
+    Serial.println(idAttuatore);
+    Serial.print("Quantità: ");
+    Serial.println(quantita);
+
+    // Ora hai i dati del messaggio JSON e puoi eseguire le operazioni necessarie
+    // in base ai valori estratti.
+  }
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
@@ -293,6 +355,7 @@ void executeIrrigations() {
   }
 }
 
+// la quantita è gia ritardo MODIFICARE 
 void erogaAcqua(const char* idAttuatore, float quantita) {
   int ritardo = quantita * 4000; // Calcola il ritardo in base alla quantità (1 ml = 4000 ms)
 
@@ -532,6 +595,8 @@ void reconnect() {
     Serial.print("Connecting to MQTT server...");
     if (client.connect("ESP8266Client")) {
       Serial.println("Connected to MQTT server");
+       client.subscribe("/action");
+        client.subscribe("/scheduling");
     } else {
       Serial.print("Retrying in 5 seconds...");
       delay(5000);
