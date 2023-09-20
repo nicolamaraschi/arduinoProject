@@ -29,14 +29,17 @@ const int MAX_TOLLERANZA_MINUTI = 5; // Imposta la tua tolleranza in minuti
 WiFiClient espClient;
 PubSubClient client(espClient);
 
+//azienda a 
+const int relayD2Pin = 4; //6t39cpuv1lke
+const int relayD3Pin = 0; //a7kb5rqp9jes6
 
-const int relayD2Pin = 4;
-const int relayD3Pin = 0;
-const int relayD4Pin = 2;
-const int relayD5Pin = 14;
+//azienda b 
+const int relayD4Pin = 2; //w2oih8lb3atrc
+const int relayD5Pin = 14; //1fu6nm9eyadq3
 
 
 struct ProgrammaIrrigazione;
+void erogaAcquaNew(const char* idAttuatore, int ritardo, int numeroIrrigazioni);
 void erogaAcqua(const char* idAttuatore, float quantita);
 void erogaMedio(const char* idAttuatore, float quantita);
 void erogaBasso(const char* idAttuatore, float quantita);
@@ -82,9 +85,7 @@ void setup() {
   Serial.println("Connected to WiFi");
 
   client.setServer(mqttServer, mqttPort);
-  client.setCallback(callback_test);
-  //client.setCallback(myMqttCallback);
-
+  client.setCallback(callback);
 
   //gestione rele 
   pinMode(relayD2Pin, OUTPUT);
@@ -138,81 +139,15 @@ void loop() {
   int currentHour = timeClient.getHours();
   int currentMinute = timeClient.getMinutes();
 
+  checkSchedulIrrigation(currentHour,currentMinute);
   // Scorrere la coda delle irrigazioni e eseguire i comandi se presenti
   executeIrrigations();
-
-   // Confronta l'orario corrente con i programmi di irrigazione salvati in EEPROM
-  for (int i = 0; i < NUMERO_PROGRAMMI_IRRIGAZIONE; i++) {
-    ProgrammaIrrigazione programma;
-    EEPROM.get(EEPROM_ADDRESS + i * EEPROM_SIZE, programma);
-
-    // Calcola la differenza tra l'orario del programma e l'orario corrente
-    int hourDifference = abs(currentHour - programma.ora);
-    int minuteDifference = abs(currentMinute - programma.minuto);
-
-    // Verifica se l'orario del programma è vicino all'orario corrente entro la tolleranza
-    if (hourDifference * 60 + minuteDifference <= MAX_TOLLERANZA_MINUTI) {
-      // Calcola il ritardo (delay) in base alla quantità (1 ml = 4000 ms)
-      int ritardo = programma.quantita * 4000;
-      // Esegui il codice di irrigazione per questo programma
-      addToIrrigationQueue(programma.idAttuatore, programma.tipoIrrigazione, ritardo);
-    }
-  }
- 
-}
-
-void callback_test(char* topic, byte* payload, unsigned int length) {
-  Serial.println("Message arrived in topic: " + String(topic));
-
-  Serial.print("Payload: ");
-  for (int i = 0; i < length; i++) {
-    Serial.print((char)payload[i]);
-  }
-  Serial.println();
-}
-
-void myMqttCallback(char* topic, byte* payload, unsigned int length) {
-  Serial.println("Messaggio ricevuto sul topic: " + String(topic));
-
-  // Verifica se il messaggio è sul topic di interesse (actionTopic)
-  if (strcmp(topic, actionTopic) == 0) {
-    // Converti il payload in una stringa JSON
-    payload[length] = '\0';
-    String jsonString = String((char*)payload);
-
-    // Parsing del JSON
-    DynamicJsonDocument jsonDoc(200);
-    DeserializationError error = deserializeJson(jsonDoc, jsonString);
-
-    // Controlla se il parsing ha avuto successo
-    if (error) {
-      Serial.print("Parsing JSON failed: ");
-      Serial.println(error.c_str());
-      return;
-    }
-
-    // Estrai i valori dal JSON
-    const char* tipoIrrigazione = jsonDoc["tipoIrrigazione"].as<const char*>();
-    const char* idAttuatore = jsonDoc["idAttuatore"].as<const char*>();
-    float quantita = jsonDoc["quantita"];
-
-    // Fai qualcosa con i valori estratti
-    Serial.print("Tipo Irrigazione: ");
-    Serial.println(tipoIrrigazione);
-    Serial.print("ID Attuatore: ");
-    Serial.println(idAttuatore);
-    Serial.print("Quantità: ");
-    Serial.println(quantita);
-
-    // Ora hai i dati del messaggio JSON e puoi eseguire le operazioni necessarie
-    // in base ai valori estratti.
-  }
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
   Serial.println("Message arrived in topic: " + String(topic));
   // Verifica se il messaggio è sul topic di comando /action
-  if (strcmp(topic, actionTopic) == 0) {
+  if (strcmp(topic, "/action") == 0) {
     // Converti il payload in una stringa JSON
     payload[length] = '\0';
     String jsonString = String((char*)payload);
@@ -241,8 +176,8 @@ void callback(char* topic, byte* payload, unsigned int length) {
     Serial.print("Quantità: ");
     Serial.println(quantita);
 
-     // Calcola il ritardo (delay) in base alla quantità (1 ml = 4000 ms)
-    int ritardo = quantita * 4000;
+     // Calcola il ritardo (delay) in base alla quantità (1 ml = 3262 ms)
+    int ritardo = quantita * 3262;
 
     // Aggiungi il comando di irrigazione alla coda
     addToIrrigationQueue(idAttuatore, tipoIrrigazione, ritardo);
@@ -318,7 +253,7 @@ void addToIrrigationQueue(const char* idAttuatore, const char* tipoIrrigazione, 
   
   // Verifica se la coda è piena
   if (nextQueueRear == queueFront) {
-    Serial.println("Queue is full. Cannot add more irrigations.");
+    Serial.println("err: Coda piena, non puoi aggiungere irrigazioni in coda.");
     return;
   }
 
@@ -343,11 +278,11 @@ void executeIrrigations() {
 
     // Esegui l'irrigazione in base al tipo
     if (tipoIrrigazione == "alta") {
-      erogaAcqua(idAttuatore.c_str(), ritardo);
+      erogaAcquaNew(idAttuatore.c_str(), ritardo,1);
     } else if (tipoIrrigazione == "media") {
-      erogaMedio(idAttuatore.c_str(), ritardo);
+      erogaAcquaNew(idAttuatore.c_str(), ritardo,2);
     } else if (tipoIrrigazione == "poca") {
-      erogaBasso(idAttuatore.c_str(), ritardo);
+      erogaAcquaNew(idAttuatore.c_str(), ritardo,4);
     }
 
     // Rimuovi il comando dalla coda
@@ -356,132 +291,34 @@ void executeIrrigations() {
 }
 
 // la quantita è gia ritardo MODIFICARE 
-void erogaAcqua(const char* idAttuatore, float quantita) {
-  int ritardo = quantita * 4000; // Calcola il ritardo in base alla quantità (1 ml = 4000 ms)
+void erogaAcquaNew(const char* idAttuatore, int ritardo, int numeroIrrigazioni){
+  
+  int conteggio = 1;
 
-  if (strcmp(idAttuatore, "6t39cpuv1lke") == 0) {
-    digitalWrite(relayD2Pin, HIGH);
-    delay(ritardo);
-    digitalWrite(relayD2Pin, LOW);
-  } else if (strcmp(idAttuatore, "a7kb5rqp9jes6") == 0) {
-    digitalWrite(relayD3Pin, HIGH);
-    delay(ritardo);
-    digitalWrite(relayD3Pin, LOW);
-  } else if (strcmp(idAttuatore, "w2oih8lb3atrc") == 0) {
-    digitalWrite(relayD4Pin, HIGH);
-    delay(ritardo);
-    digitalWrite(relayD4Pin, LOW);
-  } else if (strcmp(idAttuatore, "pompa2b") == 0) {
-    digitalWrite(relayD5Pin, HIGH);
-    delay(ritardo);
-    digitalWrite(relayD5Pin, LOW);
-  }
-}
+  while(conteggio <= numeroIrrigazioni){
 
-void erogaMedio(const char* idAttuatore, float quantita) {
-  int ritardo = quantita * 4000; // Calcola il ritardo in base alla quantità (1 ml = 4000 ms)
-  int intervallo = 2000; // Intervallo tra le erogazioni (esempio)
-
-  while (quantita > 0) {
-    if (quantita >= 5.0) {
-      // Eroga 5 ml alla volta
-      if (strcmp(idAttuatore, "6t39cpuv1lke") == 0) {
-        digitalWrite(relayD2Pin, HIGH);
-        delay(20000); // Tempo approssimativo per erogare 5 ml
-        digitalWrite(relayD2Pin, LOW);
-      } else if (strcmp(idAttuatore, "a7kb5rqp9jes6") == 0) {
-        digitalWrite(relayD3Pin, HIGH);
-        delay(20000); // Tempo approssimativo per erogare 5 ml
-        digitalWrite(relayD3Pin, LOW);
-      } else if (strcmp(idAttuatore, "w2oih8lb3atrc") == 0) {
-        digitalWrite(relayD4Pin, HIGH);
-        delay(20000); // Tempo approssimativo per erogare 5 ml
-        digitalWrite(relayD4Pin, LOW);
-      } else if (strcmp(idAttuatore, "1fu6nm9eyadq3") == 0) {
-        digitalWrite(relayD5Pin, HIGH);
-        delay(20000); // Tempo approssimativo per erogare 5 ml
-        digitalWrite(relayD5Pin, LOW);
-      }
-
-      quantita -= 5.0; // Sottrai 5 ml dalla quantità totale
-    } else {
-      // Eroga la quantità rimanente
-      if (strcmp(idAttuatore, "6t39cpuv1lke") == 0) {
-        digitalWrite(relayD2Pin, HIGH);
-        delay(quantita * 4000); // Tempo per erogare la quantità rimanente
-        digitalWrite(relayD2Pin, LOW);
-      } else if (strcmp(idAttuatore, "a7kb5rqp9jes6") == 0) {
-        digitalWrite(relayD3Pin, HIGH);
-        delay(quantita * 4000); // Tempo per erogare la quantità rimanente
-        digitalWrite(relayD3Pin, LOW);
-      } else if (strcmp(idAttuatore, "w2oih8lb3atrc") == 0) {
-        digitalWrite(relayD4Pin, HIGH);
-        delay(quantita * 4000); // Tempo per erogare la quantità rimanente
-        digitalWrite(relayD4Pin, LOW);
-      } else if (strcmp(idAttuatore, "1fu6nm9eyadq3") == 0) {
-        digitalWrite(relayD5Pin, HIGH);
-        delay(quantita * 4000); // Tempo per erogare la quantità rimanente
-        digitalWrite(relayD5Pin, LOW);
-      }
-      quantita = 0; // La quantità è stata completamente erogata
+    if (strcmp(idAttuatore, "6t39cpuv1lke") == 0) {
+      digitalWrite(relayD2Pin, HIGH);
+      delay(ritardo/numeroIrrigazioni);
+      digitalWrite(relayD2Pin, LOW);
+    } else if (strcmp(idAttuatore, "a7kb5rqp9jes6") == 0) {
+      digitalWrite(relayD3Pin, HIGH);
+      delay(ritardo/numeroIrrigazioni);
+      digitalWrite(relayD3Pin, LOW);
+    } else if (strcmp(idAttuatore, "w2oih8lb3atrc") == 0) {
+      digitalWrite(relayD4Pin, HIGH);
+      delay(ritardo/numeroIrrigazioni);
+      digitalWrite(relayD4Pin, LOW);
+    } else if (strcmp(idAttuatore, "1fu6nm9eyadq3") == 0) {
+      digitalWrite(relayD5Pin, HIGH);
+      delay(ritardo/numeroIrrigazioni);
+      digitalWrite(relayD5Pin, LOW);
     }
-
-    // Aggiungi un intervallo tra le erogazioni successive
-    delay(intervallo);
+    
+    delay(5000);
+    conteggio++;
   }
-}
-
-void erogaBasso(const char* idAttuatore, float quantita) {
-  int ritardo = quantita * 4000; // Calcola il ritardo in base alla quantità (1 ml = 4000 ms)
-  int intervallo = 4000; // Intervallo più lungo tra le erogazioni (esempio)
-
-  while (quantita > 0) {
-    if (quantita >= 5.0) {
-      // Eroga 5 ml alla volta
-      if (strcmp(idAttuatore, "pompa1a") == 0) {
-        digitalWrite(relayD2Pin, HIGH);
-        delay(20000); // Tempo approssimativo per erogare 5 ml
-        digitalWrite(relayD2Pin, LOW);
-      } else if (strcmp(idAttuatore, "pompa2a") == 0) {
-        digitalWrite(relayD3Pin, HIGH);
-        delay(20000); // Tempo approssimativo per erogare 5 ml
-        digitalWrite(relayD3Pin, LOW);
-      } else if (strcmp(idAttuatore, "pompa1b") == 0) {
-        digitalWrite(relayD4Pin, HIGH);
-        delay(20000); // Tempo approssimativo per erogare 5 ml
-        digitalWrite(relayD4Pin, LOW);
-      } else if (strcmp(idAttuatore, "pompa2b") == 0) {
-        digitalWrite(relayD5Pin, HIGH);
-        delay(20000); // Tempo approssimativo per erogare 5 ml
-        digitalWrite(relayD5Pin, LOW);
-      }
-
-      quantita -= 5.0; // Sottrai 5 ml dalla quantità totale
-    } else {
-      // Eroga la quantità rimanente
-      if (strcmp(idAttuatore, "pompa1a") == 0) {
-        digitalWrite(relayD2Pin, HIGH);
-        delay(quantita * 4000); // Tempo per erogare la quantità rimanente
-        digitalWrite(relayD2Pin, LOW);
-      } else if (strcmp(idAttuatore, "pompa2a") == 0) {
-        digitalWrite(relayD3Pin, HIGH);
-        delay(quantita * 4000); // Tempo per erogare la quantità rimanente
-        digitalWrite(relayD3Pin, LOW);
-      } else if (strcmp(idAttuatore, "pompa1b") == 0) {
-        digitalWrite(relayD4Pin, HIGH);
-        delay(quantita * 4000); // Tempo per erogare la quantità rimanente
-        digitalWrite(relayD4Pin, LOW);
-      } else if (strcmp(idAttuatore, "pompa2b") == 0) {
-        digitalWrite(relayD5Pin, HIGH);
-        delay(quantita * 4000); // Tempo per erogare la quantità rimanente
-        digitalWrite(relayD5Pin, LOW);
-      }
-      quantita = 0; // La quantità è stata completamente erogata
-    }
-
-    // Aggiungi un intervallo più lungo tra le erogazioni successive
-    delay(intervallo);
-  }
+  
 }
 
 bool programmaEsiste(const char* idAttuatore) {
@@ -592,9 +429,9 @@ void announceAttuatoris() {
 
 void reconnect() {
   while (!client.connected()) {
-    Serial.print("Connecting to MQTT server...");
+    Serial.print("Connessione a MQTT server...");
     if (client.connect("ESP8266Client")) {
-      Serial.println("Connected to MQTT server");
+      Serial.println("Adesso Connesso a MQTT server");
        client.subscribe("/action");
         client.subscribe("/scheduling");
     } else {
@@ -604,39 +441,26 @@ void reconnect() {
   }
 }
 
-void publishQueueStatus() {
-  // Creare un oggetto JSON per rappresentare lo stato della coda
-  DynamicJsonDocument doc(1024); // 1024 è la dimensione del buffer JSON, regola secondo necessità
+void checkSchedulIrrigation(int currentHour,int currentMinute ){
+  // Confronta l'orario corrente con i programmi di irrigazione salvati in EEPROM
+  for (int i = 0; i < NUMERO_PROGRAMMI_IRRIGAZIONE; i++) {
+    ProgrammaIrrigazione programma;
+    EEPROM.get(EEPROM_ADDRESS + i * EEPROM_SIZE, programma);
 
-  // Creare un array JSON per la lista dei comandi di irrigazione pendenti
-  JsonArray queueArray = doc.createNestedArray("queue");
+    // Calcola la differenza tra l'orario del programma e l'orario corrente
+    int hourDifference = abs(currentHour - programma.ora);
+    int minuteDifference = abs(currentMinute - programma.minuto);
 
-  // Scorrere la coda delle irrigazioni e aggiungere ogni comando all'array JSON
-  int currentIndex = queueFront;
-  while (currentIndex != queueRear) {
-    String command = irrigationQueue[currentIndex];
-    int comma1 = command.indexOf(",");
-    int comma2 = command.indexOf(",", comma1 + 1);
-    String tipoIrrigazione = command.substring(comma1 + 1, comma2);
-    String idAttuatore = command.substring(0, comma1);
-    float quantita = command.substring(comma2 + 1).toFloat();
-
-    // Creare un oggetto JSON per rappresentare un singolo comando
-    JsonObject commandObj = queueArray.createNestedObject();
-    commandObj["tipoIrrigazione"] = tipoIrrigazione;
-    commandObj["idAttuatore"] = idAttuatore;
-    commandObj["quantita"] = quantita;
-
-    currentIndex = (currentIndex + 1) % maxQueueSize;
+    // Verifica se l'orario del programma è vicino all'orario corrente entro la tolleranza
+    if (hourDifference * 60 + minuteDifference <= MAX_TOLLERANZA_MINUTI) {
+      // Calcola il ritardo (delay) in base alla quantità (1 ml = 4000 ms)
+      int ritardo = programma.quantita * 4000;
+      // Esegui il codice di irrigazione per questo programma
+      addToIrrigationQueue(programma.idAttuatore, programma.tipoIrrigazione, ritardo);
+    }
   }
+} 
 
-  // Serializzare l'oggetto JSON in una stringa
-  String jsonString;
-  serializeJson(doc, jsonString);
-
-  // Pubblicare la stringa JSON sul topic MQTT /status
-  client.publish("/status", jsonString.c_str());
-}
 
 
 
@@ -699,4 +523,191 @@ void runTests() {
   // Test completati
   Serial.println("Test completati");
 }
+void publishQueueStatus() {
+  // Creare un oggetto JSON per rappresentare lo stato della coda
+  DynamicJsonDocument doc(1024); // 1024 è la dimensione del buffer JSON, regola secondo necessità
+
+  // Creare un array JSON per la lista dei comandi di irrigazione pendenti
+  JsonArray queueArray = doc.createNestedArray("queue");
+
+  // Scorrere la coda delle irrigazioni e aggiungere ogni comando all'array JSON
+  int currentIndex = queueFront;
+  while (currentIndex != queueRear) {
+    String command = irrigationQueue[currentIndex];
+    int comma1 = command.indexOf(",");
+    int comma2 = command.indexOf(",", comma1 + 1);
+    String tipoIrrigazione = command.substring(comma1 + 1, comma2);
+    String idAttuatore = command.substring(0, comma1);
+    float quantita = command.substring(comma2 + 1).toFloat();
+
+    // Creare un oggetto JSON per rappresentare un singolo comando
+    JsonObject commandObj = queueArray.createNestedObject();
+    commandObj["tipoIrrigazione"] = tipoIrrigazione;
+    commandObj["idAttuatore"] = idAttuatore;
+    commandObj["quantita"] = quantita;
+
+    currentIndex = (currentIndex + 1) % maxQueueSize;
+  }
+
+  // Serializzare l'oggetto JSON in una stringa
+  String jsonString;
+  serializeJson(doc, jsonString);
+
+  // Pubblicare la stringa JSON sul topic MQTT /status
+  client.publish("/status", jsonString.c_str());
+}
+
+void erogaMedio(const char* idAttuatore, float quantita) {
+  int ritardo = quantita * 4000; // Calcola il ritardo in base alla quantità (1 ml = 4000 ms)
+  int intervallo = 2000; // Intervallo tra le erogazioni (esempio)
+
+  while (quantita > 0) {
+    if (quantita >= 5.0) {
+      // Eroga 5 ml alla volta
+      if (strcmp(idAttuatore, "6t39cpuv1lke") == 0) {
+        digitalWrite(relayD2Pin, HIGH);
+        delay(20000); // Tempo approssimativo per erogare 5 ml
+        digitalWrite(relayD2Pin, LOW);
+      } else if (strcmp(idAttuatore, "a7kb5rqp9jes6") == 0) {
+        digitalWrite(relayD3Pin, HIGH);
+        delay(20000); // Tempo approssimativo per erogare 5 ml
+        digitalWrite(relayD3Pin, LOW);
+      } else if (strcmp(idAttuatore, "w2oih8lb3atrc") == 0) {
+        digitalWrite(relayD4Pin, HIGH);
+        delay(20000); // Tempo approssimativo per erogare 5 ml
+        digitalWrite(relayD4Pin, LOW);
+      } else if (strcmp(idAttuatore, "1fu6nm9eyadq3") == 0) {
+        digitalWrite(relayD5Pin, HIGH);
+        delay(20000); // Tempo approssimativo per erogare 5 ml
+        digitalWrite(relayD5Pin, LOW);
+      }
+
+      quantita -= 5.0; // Sottrai 5 ml dalla quantità totale
+    } else {
+      // Eroga la quantità rimanente
+      if (strcmp(idAttuatore, "6t39cpuv1lke") == 0) {
+        digitalWrite(relayD2Pin, HIGH);
+        delay(quantita * 4000); // Tempo per erogare la quantità rimanente
+        digitalWrite(relayD2Pin, LOW);
+      } else if (strcmp(idAttuatore, "a7kb5rqp9jes6") == 0) {
+        digitalWrite(relayD3Pin, HIGH);
+        delay(quantita * 4000); // Tempo per erogare la quantità rimanente
+        digitalWrite(relayD3Pin, LOW);
+      } else if (strcmp(idAttuatore, "w2oih8lb3atrc") == 0) {
+        digitalWrite(relayD4Pin, HIGH);
+        delay(quantita * 4000); // Tempo per erogare la quantità rimanente
+        digitalWrite(relayD4Pin, LOW);
+      } else if (strcmp(idAttuatore, "1fu6nm9eyadq3") == 0) {
+        digitalWrite(relayD5Pin, HIGH);
+        delay(quantita * 4000); // Tempo per erogare la quantità rimanente
+        digitalWrite(relayD5Pin, LOW);
+      }
+      quantita = 0; // La quantità è stata completamente erogata
+    }
+
+    // Aggiungi un intervallo tra le erogazioni successive
+    delay(intervallo);
+  }
+}
+
+void erogaBasso(const char* idAttuatore, float quantita) {
+  int ritardo = quantita * 4000; // Calcola il ritardo in base alla quantità (1 ml = 4000 ms)
+  int intervallo = 4000; // Intervallo più lungo tra le erogazioni (esempio)
+
+  while (quantita > 0) {
+    if (quantita >= 5.0) {
+      // Eroga 5 ml alla volta
+      if (strcmp(idAttuatore, "pompa1a") == 0) {
+        digitalWrite(relayD2Pin, HIGH);
+        delay(20000); // Tempo approssimativo per erogare 5 ml
+        digitalWrite(relayD2Pin, LOW);
+      } else if (strcmp(idAttuatore, "pompa2a") == 0) {
+        digitalWrite(relayD3Pin, HIGH);
+        delay(20000); // Tempo approssimativo per erogare 5 ml
+        digitalWrite(relayD3Pin, LOW);
+      } else if (strcmp(idAttuatore, "pompa1b") == 0) {
+        digitalWrite(relayD4Pin, HIGH);
+        delay(20000); // Tempo approssimativo per erogare 5 ml
+        digitalWrite(relayD4Pin, LOW);
+      } else if (strcmp(idAttuatore, "pompa2b") == 0) {
+        digitalWrite(relayD5Pin, HIGH);
+        delay(20000); // Tempo approssimativo per erogare 5 ml
+        digitalWrite(relayD5Pin, LOW);
+      }
+
+      quantita -= 5.0; // Sottrai 5 ml dalla quantità totale
+    } else {
+      // Eroga la quantità rimanente
+      if (strcmp(idAttuatore, "pompa1a") == 0) {
+        digitalWrite(relayD2Pin, HIGH);
+        delay(quantita * 4000); // Tempo per erogare la quantità rimanente
+        digitalWrite(relayD2Pin, LOW);
+      } else if (strcmp(idAttuatore, "pompa2a") == 0) {
+        digitalWrite(relayD3Pin, HIGH);
+        delay(quantita * 4000); // Tempo per erogare la quantità rimanente
+        digitalWrite(relayD3Pin, LOW);
+      } else if (strcmp(idAttuatore, "pompa1b") == 0) {
+        digitalWrite(relayD4Pin, HIGH);
+        delay(quantita * 4000); // Tempo per erogare la quantità rimanente
+        digitalWrite(relayD4Pin, LOW);
+      } else if (strcmp(idAttuatore, "pompa2b") == 0) {
+        digitalWrite(relayD5Pin, HIGH);
+        delay(quantita * 4000); // Tempo per erogare la quantità rimanente
+        digitalWrite(relayD5Pin, LOW);
+      }
+      quantita = 0; // La quantità è stata completamente erogata
+    }
+
+    // Aggiungi un intervallo più lungo tra le erogazioni successive
+    delay(intervallo);
+  }
+}
+void callback_test(char* topic, byte* payload, unsigned int length) {
+  Serial.println("Message arrived in topic: " + String(topic));
+
+  Serial.print("Payload: ");
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
+}
+
+void myMqttCallback(char* topic, byte* payload, unsigned int length) {
+  Serial.println("Messaggio ricevuto sul topic: " + String(topic));
+
+  // Verifica se il messaggio è sul topic di interesse (actionTopic)
+  if (strcmp(topic, actionTopic) == 0) {
+    // Converti il payload in una stringa JSON
+    payload[length] = '\0';
+    String jsonString = String((char*)payload);
+
+    // Parsing del JSON
+    DynamicJsonDocument jsonDoc(200);
+    DeserializationError error = deserializeJson(jsonDoc, jsonString);
+
+    // Controlla se il parsing ha avuto successo
+    if (error) {
+      Serial.print("Parsing JSON failed: ");
+      Serial.println(error.c_str());
+      return;
+    }
+
+    // Estrai i valori dal JSON
+    const char* tipoIrrigazione = jsonDoc["tipoIrrigazione"].as<const char*>();
+    const char* idAttuatore = jsonDoc["idAttuatore"].as<const char*>();
+    float quantita = jsonDoc["quantita"];
+
+    // Fai qualcosa con i valori estratti
+    Serial.print("Tipo Irrigazione: ");
+    Serial.println(tipoIrrigazione);
+    Serial.print("ID Attuatore: ");
+    Serial.println(idAttuatore);
+    Serial.print("Quantità: ");
+    Serial.println(quantita);
+
+    // Ora hai i dati del messaggio JSON e puoi eseguire le operazioni necessarie
+    // in base ai valori estratti.
+  }
+}
+
 */

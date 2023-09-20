@@ -13,16 +13,21 @@ PubSubClient client(espClient);
 
 const int echoPin = D5;  // Echo
 const int trigPin = D6;  // Trig
-
-
 long duration;
 int distance;
+
+int humidityValue = 0; // Variabile per memorizzare l'umidità come intero
+
+// Calibrazione sensori volumetrici
+float distances[] = {11, 9,  6.5, 4, 2.6 };
+float volumes[] =   {0, 150.0, 300.0,  450.0, 600};
 
 #define DHTPIN1 D2
 #define DHTPIN2 D4
 #define DHTTYPE DHT11
 DHT dht1(DHTPIN1, DHTTYPE);
 DHT dht2(DHTPIN2, DHTTYPE);
+float calculateVolume(float distance);
 
 const int soilMoisturePin = A0;
 
@@ -30,14 +35,16 @@ bool sensorsAnnounced = false;
 
 void setup() {
   Serial.begin(9600);
+  // per umidita seriale devi scegliere tra seriale 9600 e 
+  Serial1.begin(9600);
 
   // Connessione WiFi
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(1000);
-    Serial.println("Connecting to WiFi...");
+    Serial.println("Connesione al WiFi in corso...");
   }
-  Serial.println("Connected to WiFi");
+  Serial.println("Adesso Connesso al WiFi");
 
   // Inizializzazione del client MQTT
   client.setServer(mqttServer, mqttPort);
@@ -76,7 +83,15 @@ void loop() {
     distance = duration * 0.034 / 2;
     Serial.print("Distance: ");
     Serial.println(distance);
-    client.publish("/livelloAcqua", createMessage("livelloAcquaEsp1", distance).c_str());
+    
+   // Calcola il volume utilizzando la funzione
+  float totalVolume = calculateVolume(distance);
+
+  Serial.print("Total Volume: ");
+  Serial.print(totalVolume);
+  Serial.println(" ml");
+
+  client.publish("/livelloAcqua", createMessage("livelloAcquaEsp1", totalVolume).c_str());
 
     // Temperatura e umidità
     float temp1 = dht1.readTemperature();
@@ -99,10 +114,18 @@ void loop() {
     client.publish("/umiditaTerreno", createMessage("umidTerreno1Esp1", soilMoisture).c_str());
     //client.publish("/umiditaTerreno", createMessage("umidTerreno2Esp1", soilMoisture).c_str());
     
+    if (Serial1.available()) {
+    // Converti la stringa in un valore float
+    humidityValue = data.toFloat();
+    // Ora puoi fare quello che vuoi con humidityValue, ad esempio stamparlo
+    Serial.print("Valore di umidità ricevuto: ");
+    Serial.println(humidityValue);
+    client.publish("/umiditaTerreno", createMessage("umidTerreno2Esp1", humidityValue).c_str());
+  }
     
   }
 
-  delay(60000); // Intervallo di 5 secondi
+  delay(60000);
 }
 
 void reconnect() {
@@ -127,7 +150,6 @@ String createMessage(const char* nome, float valore) {
   return jsonStr;
 }
 
-
 void announceSensor(const char* tipoSensore, const char* nomeSensore, int idCampo) {
   // Annuncio del sensore nel topic /announce
   StaticJsonDocument<200> jsonDoc;
@@ -140,8 +162,6 @@ void announceSensor(const char* tipoSensore, const char* nomeSensore, int idCamp
   client.publish("/announce", jsonStr.c_str());
 }
 
-
-
 void announceSensors() {
   // Annuncio dei sensori al topic /announce
   announceSensor("temperaturaAria", "tempAria1Esp1", 1);
@@ -153,5 +173,20 @@ void announceSensors() {
   announceSensor("umiditaTerreno", "umidTerreno2Esp1", 2);
 }
 
+// Funzione per calcolare il volume basato su una regressione lineare
+float calculateVolume(float distance) {
+  if (distance >= distances[0]) {
+    return volumes[0];  // Serbatoio vuoto
+  } else if (distance <= distances[3]) {
+    return volumes[3];  // 650 ml
+  } else {
+    // Calcola la retta di regressione lineare
+    float slope = (volumes[3] - volumes[0]) / (distances[3] - distances[0]);
+    float intercept = volumes[0] - slope * distances[0];
+    
+    // Calcola il volume utilizzando la retta
+    return slope * distance + intercept;
+  }
+}
 
 
